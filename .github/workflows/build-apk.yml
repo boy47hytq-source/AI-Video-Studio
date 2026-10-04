@@ -3,38 +3,106 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download source
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      - name: Check ZIP
+        run: |
+          echo "Files in repository:"
+          ls -lah
+          echo
+          echo "ZIP contents:"
+          unzip -l AI-Video-Studio-v1.zip | head -80
+
       - name: Extract project
         run: |
-          mkdir project
+          rm -rf project
+          mkdir -p project
           unzip -o AI-Video-Studio-v1.zip -d project
+
+          echo "Extracted files:"
+          find project -maxdepth 4 -type f | head -100
+
+      - name: Find Android project
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT_DIR=""
+
+          SETTINGS_FILE=$(find project -type f \( \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" \
+          \) | head -1)
+
+          if [ -n "$SETTINGS_FILE" ]; then
+            PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            BUILD_FILE=$(find project -type f \( \
+              -name "build.gradle" -o \
+              -name "build.gradle.kts" \
+            \) | head -1)
+
+            if [ -n "$BUILD_FILE" ]; then
+              PROJECT_DIR="$(dirname "$BUILD_FILE")"
+            fi
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Cannot find Gradle Android project."
+            echo
+            echo "Project contents:"
+            find project -maxdepth 5 -type f
+            exit 1
+          fi
+
+          echo "Android project found at: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Show project structure
+        run: |
+          echo "Using project directory:"
+          echo "$PROJECT_DIR"
+          echo
+          ls -lah "$PROJECT_DIR"
+          echo
+          find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -150
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Build APK
-        working-directory: project
-        run: gradle :app:assembleDebug
+      - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Save APK
+      - name: Find generated APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "Generated APK files:"
+          find app/build/outputs -type f -name "*.apk" -print
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AI-Video-Studio-V1-APK
-          path: project/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
