@@ -42,7 +42,7 @@ jobs:
           echo "=== ZIP contents ==="
           unzip -l "AI-Video-Studio-v1.zip" | head -120
 
-      - name: Extract Android project
+            - name: Extract Android project
         shell: bash
         run: |
           set -e
@@ -52,9 +52,8 @@ jobs:
 
           unzip -o "AI-Video-Studio-v1.zip" -d project
 
-          echo
           echo "=== Extracted files ==="
-          find project -maxdepth 5 -type f | sort | head -200
+          find project -maxdepth 5 -type f -print
 
       - name: Find Android project
         shell: bash
