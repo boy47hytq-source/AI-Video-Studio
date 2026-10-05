@@ -1,4 +1,4 @@
-Name: Build Android APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -24,6 +24,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Check repository
         shell: bash
@@ -63,12 +64,11 @@ jobs:
 
           PROJECT_DIR=""
 
-          # Tìm file settings.gradle ở cấp nông nhất
           SETTINGS_FILE="$(
             find project -type f \( \
               -name "settings.gradle" \
               -o -name "settings.gradle.kts" \
-            \) | awk '{ print length, $0 }' | sort -n | cut -d' ' -f2- | head -n 1
+            \) -print | head -n 1
           )"
 
           if [ -n "$SETTINGS_FILE" ]; then
@@ -80,7 +80,7 @@ jobs:
               find project -type f \( \
                 -name "build.gradle" \
                 -o -name "build.gradle.kts" \
-              \) | awk '{ print length, $0 }' | sort -n | cut -d' ' -f2- | head -n 1
+              \) -print | head -n 1
             )"
 
             if [ -n "$BUILD_FILE" ]; then
@@ -98,7 +98,6 @@ jobs:
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Show Android project
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
@@ -138,24 +137,28 @@ jobs:
             -o -name "gradlew" \
           \) -print
 
-          # Nếu wrapper đầy đủ (gồm cả jar) thì dùng, nếu thiếu thì tự sinh mới bằng Gradle 8.9
-          if [ -f "./gradlew" ] && [ -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
+          if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
 
             if [ -f "./gradle/wrapper/gradle-wrapper.properties" ]; then
+              echo "=== Current Gradle wrapper ==="
+              cat ./gradle/wrapper/gradle-wrapper.properties
+
               echo "=== Aligning Gradle wrapper to 8.9 ==="
+
               sed -i -E \
                 's#gradle-[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?-(bin|all)\.zip#gradle-8.9-bin.zip#g' \
                 ./gradle/wrapper/gradle-wrapper.properties
             fi
 
+            chmod +x ./gradlew
+
             echo "=== Gradle version ==="
             ./gradlew --version
           else
-            echo "=== Gradle wrapper missing or incomplete. Generating new wrapper... ==="
-            gradle wrapper --gradle-version 8.9
-            chmod +x ./gradlew
-            ./gradlew --version
+            echo "No Gradle wrapper found."
+            echo "=== System Gradle ==="
+            gradle --version
           fi
 
       - name: Build Debug APK
@@ -174,9 +177,18 @@ jobs:
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew :app:assembleDebug --no-daemon --stacktrace --warning-mode all
+
+            ./gradlew \
+              :app:assembleDebug \
+              --no-daemon \
+              --stacktrace \
+              --warning-mode all
           else
-            gradle :app:assembleDebug --no-daemon --stacktrace --warning-mode all
+            gradle \
+              :app:assembleDebug \
+              --no-daemon \
+              --stacktrace \
+              --warning-mode all
           fi
 
       - name: Find generated APK
@@ -185,27 +197,39 @@ jobs:
         run: |
           set -e
 
-          echo "=== Searching for APK files ==="
-          find . -type f -name "*.apk" -print
+          echo "=== APK files ==="
+
+          find . \
+            -type f \
+            -name "*.apk" \
+            -print
 
           APK="$(
-            find . \
+            find app/build/outputs \
               -type f \
               -name "*.apk" \
-              -not -path "*/intermediates/*" \
               -print \
               | head -n 1
           )"
 
           if [ -z "$APK" ]; then
             echo "::error::No APK was generated."
+
+            echo "=== Build outputs ==="
+            find app/build/outputs \
+              -maxdepth 8 \
+              -type f \
+              -print 2>/dev/null || true
+
             exit 1
           fi
 
           echo "APK found: $APK"
 
           mkdir -p "$GITHUB_WORKSPACE/apk-output"
-          cp "$APK" "$GITHUB_WORKSPACE/apk-output/AI-Video-Studio-v1-debug.apk"
+
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/apk-output/AI-Video-Studio-v1-debug.apk"
 
           echo "=== Final APK ==="
           ls -lh "$GITHUB_WORKSPACE/apk-output/"
