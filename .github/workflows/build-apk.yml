@@ -1,4 +1,4 @@
-name: Build Android APK
+Name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -35,14 +35,15 @@ jobs:
 
           if [ ! -f "AI-Video-Studio-v1.zip" ]; then
             echo "::error::AI-Video-Studio-v1.zip was not found."
+            echo "=== ZIP files available ==="
+            find . -maxdepth 2 -type f -iname "*.zip" -print
             exit 1
           fi
 
-          echo
           echo "=== ZIP contents ==="
           unzip -l "AI-Video-Studio-v1.zip" | head -120
 
-            - name: Extract Android project
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
@@ -53,7 +54,7 @@ jobs:
           unzip -o "AI-Video-Studio-v1.zip" -d project
 
           echo "=== Extracted files ==="
-          find project -maxdepth 5 -type f -print
+          find project -maxdepth 5 -type f -print | sort | head -250
 
       - name: Find Android project
         shell: bash
@@ -62,20 +63,25 @@ jobs:
 
           PROJECT_DIR=""
 
-          SETTINGS_FILE="$(find project -type f \( \
-            -name "settings.gradle" -o \
-            -name "settings.gradle.kts" \
-          \) | head -n 1)"
+          # Tìm file settings.gradle ở cấp nông nhất
+          SETTINGS_FILE="$(
+            find project -type f \( \
+              -name "settings.gradle" \
+              -o -name "settings.gradle.kts" \
+            \) | awk '{ print length, $0 }' | sort -n | cut -d' ' -f2- | head -n 1
+          )"
 
           if [ -n "$SETTINGS_FILE" ]; then
             PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
           fi
 
           if [ -z "$PROJECT_DIR" ]; then
-            BUILD_FILE="$(find project -type f \( \
-              -name "build.gradle" -o \
-              -name "build.gradle.kts" \
-            \) | head -n 1)"
+            BUILD_FILE="$(
+              find project -type f \( \
+                -name "build.gradle" \
+                -o -name "build.gradle.kts" \
+              \) | awk '{ print length, $0 }' | sort -n | cut -d' ' -f2- | head -n 1
+            )"
 
             if [ -n "$BUILD_FILE" ]; then
               PROJECT_DIR="$(dirname "$BUILD_FILE")"
@@ -84,31 +90,38 @@ jobs:
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "::error::Android Gradle project was not found."
-            find project -maxdepth 6 -type f | sort
+            find project -maxdepth 8 -type f | sort
             exit 1
           fi
 
           echo "Android project found at: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-            - name: Show Android project
-         shell: bash
+      - name: Show Android project
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           set -e
 
           echo "=== Project directory ==="
           pwd
-          ls -la
 
           echo "=== Project files ==="
           find . -maxdepth 5 -type f | sort
 
           echo "=== Gradle files ==="
-          find . -maxdepth 4 -type f \( -name "build.gradle" -o -name "build.gradle.kts" -o -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
-            - name: Setup Gradle
-          uses: gradle/actions/setup-gradle@v4
-          with:
-          gradle-version: "8.13"
+          find . -maxdepth 6 -type f \( \
+            -name "build.gradle" \
+            -o -name "build.gradle.kts" \
+            -o -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+            -o -name "gradle-wrapper.properties" \
+          \) -print | sort
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
 
       - name: Prepare Gradle
         working-directory: ${{ env.PROJECT_DIR }}
@@ -116,12 +129,33 @@ jobs:
         run: |
           set -e
 
-          if [ -f "./gradlew" ]; then
+          echo "=== Java ==="
+          java -version
+
+          echo "=== Gradle files ==="
+          find . -maxdepth 4 -type f \( \
+            -name "gradle-wrapper.properties" \
+            -o -name "gradlew" \
+          \) -print
+
+          # Nếu wrapper đầy đủ (gồm cả jar) thì dùng, nếu thiếu thì tự sinh mới bằng Gradle 8.9
+          if [ -f "./gradlew" ] && [ -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
             chmod +x ./gradlew
-            sed -i 's/\r$//' ./gradlew
+
+            if [ -f "./gradle/wrapper/gradle-wrapper.properties" ]; then
+              echo "=== Aligning Gradle wrapper to 8.9 ==="
+              sed -i -E \
+                's#gradle-[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?-(bin|all)\.zip#gradle-8.9-bin.zip#g' \
+                ./gradle/wrapper/gradle-wrapper.properties
+            fi
+
+            echo "=== Gradle version ==="
             ./gradlew --version
           else
-            gradle --version
+            echo "=== Gradle wrapper missing or incomplete. Generating new wrapper... ==="
+            gradle wrapper --gradle-version 8.9
+            chmod +x ./gradlew
+            ./gradlew --version
           fi
 
       - name: Build Debug APK
@@ -130,51 +164,56 @@ jobs:
         run: |
           set -e
 
-          echo "=== Configure JVM 17 ==="
-
-          cat > jvm17.init.gradle <<'EOF'
-          allprojects {
-              tasks.withType(JavaCompile).configureEach {
-                  options.release = 17
-              }
-          }
-          EOF
-
           echo "=== Building Debug APK ==="
+
+          if [ ! -d "app" ]; then
+            echo "::error::The app module was not found."
+            find . -maxdepth 4 -type d | sort
+            exit 1
+          fi
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            sed -i 's/\r$//' ./gradlew
-            ./gradlew --init-script jvm17.init.gradle :app:assembleDebug --no-daemon --stacktrace --warning-mode all
+            ./gradlew :app:assembleDebug --no-daemon --stacktrace --warning-mode all
           else
-            gradle --init-script jvm17.init.gradle :app:assembleDebug --no-daemon --stacktrace --warning-mode all
+            gradle :app:assembleDebug --no-daemon --stacktrace --warning-mode all
           fi
+
       - name: Find generated APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          echo "=== APK files ==="
+          echo "=== Searching for APK files ==="
           find . -type f -name "*.apk" -print
 
-          APK="$(find app/build/outputs -type f -name "*.apk" | head -n 1)"
+          APK="$(
+            find . \
+              -type f \
+              -name "*.apk" \
+              -not -path "*/intermediates/*" \
+              -print \
+              | head -n 1
+          )"
 
           if [ -z "$APK" ]; then
             echo "::error::No APK was generated."
-            find app/build/outputs -maxdepth 6 -type f -print 2>/dev/null || true
             exit 1
           fi
 
           echo "APK found: $APK"
 
           mkdir -p "$GITHUB_WORKSPACE/apk-output"
-          cp "$APK" "$GITHUB_WORKSPACE/apk-output/AI-Video-Studio-V1-debug.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/apk-output/AI-Video-Studio-v1-debug.apk"
+
+          echo "=== Final APK ==="
+          ls -lh "$GITHUB_WORKSPACE/apk-output/"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI-Video-Studio-V1-APK
-          path: apk-output/AI-Video-Studio-V1-debug.apk
+          name: AI-Video-Studio-v1-APK
+          path: apk-output/AI-Video-Studio-v1-debug.apk
           if-no-files-found: error
           retention-days: 14
