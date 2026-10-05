@@ -127,18 +127,25 @@ jobs:
         run: |
           set -e
 
-          if [ ! -d "app" ]; then
-            echo "::error::The app module was not found."
-            find . -maxdepth 3 -type d | sort
-            exit 1
-          fi
+          echo "=== Configure JVM 17 ==="
+
+          cat > jvm17.init.gradle <<'EOF'
+          allprojects {
+              tasks.withType(JavaCompile).configureEach {
+                  options.release = 17
+              }
+          }
+          EOF
+
+          echo "=== Building Debug APK ==="
 
           if [ -f "./gradlew" ]; then
-            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+            chmod +x ./gradlew
+            sed -i 's/\r$//' ./gradlew
+            ./gradlew --init-script jvm17.init.gradle :app:assembleDebug --no-daemon --stacktrace --warning-mode all
           else
-            gradle :app:assembleDebug --no-daemon --stacktrace
+            gradle --init-script jvm17.init.gradle :app:assembleDebug --no-daemon --stacktrace --warning-mode all
           fi
-
       - name: Find generated APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
