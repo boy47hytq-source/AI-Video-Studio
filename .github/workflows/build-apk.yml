@@ -104,8 +104,10 @@ jobs:
           echo "=== Project files ==="
           find "$PROJECT_DIR" -maxdepth 4 -type f | sort | head -250
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+            - name: Setup Gradle
+          uses: gradle/actions/setup-gradle@v4
+          with:
+          gradle-version: "8.13"
 
       - name: Prepare Gradle
         working-directory: ${{ env.PROJECT_DIR }}
