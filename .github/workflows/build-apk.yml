@@ -92,18 +92,20 @@ jobs:
           echo "Android project found at: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Show Android project
-        shell: bash
+            - name: Show Android project
+         shell: bash
         run: |
           set -e
 
           echo "=== Project directory ==="
-          echo "$PROJECT_DIR"
+          pwd
+          ls -la
 
-          echo
           echo "=== Project files ==="
-          find "$PROJECT_DIR" -maxdepth 4 -type f | sort | head -250
+          find . -maxdepth 5 -type f | sort
 
+          echo "=== Gradle files ==="
+          find . -maxdepth 4 -type f \( -name "build.gradle" -o -name "build.gradle.kts" -o -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
             - name: Setup Gradle
           uses: gradle/actions/setup-gradle@v4
           with:
