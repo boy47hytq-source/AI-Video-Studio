@@ -1,7 +1,8 @@
-name: Build Android APK
+name: Build Debug APK
 
-"on":
+on:
   workflow_dispatch:
+
   push:
     branches:
       - main
@@ -13,10 +14,10 @@ jobs:
   build:
     name: Build Debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -25,232 +26,305 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "8.9"
+
       - name: Check repository
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Repository files ==="
-          ls -lah
-
-          ZIP_FILE="AI-Video-Studio-v1.zip"
-
-          if [[ ! -f "$ZIP_FILE" ]]; then
-            echo "::error::$ZIP_FILE was not found."
-            echo "=== Available ZIP files ==="
-            find . -maxdepth 3 -type f -iname '*.zip' -print | sort
-            exit 1
-          fi
-
-          echo "Found: $ZIP_FILE"
-
-          echo "=== ZIP contents ==="
-          unzip -l "$ZIP_FILE" | sed -n '1,160p'
-
-      - name: Extract Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf project
-          mkdir -p project
-
-          unzip -oq "AI-Video-Studio-v1.zip" -d project
-
-          echo "=== Extracted files ==="
-          find project -maxdepth 8 -type f -print | sort | sed -n '1,300p'
-
-      - name: Find Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT_DIR=""
-
-          while IFS= read -r settings_file; do
-            PROJECT_DIR="$(dirname "$settings_file")"
-            break
-          done < <(
-            find project -type f \
-              \( \
-                -name 'settings.gradle' \
-                -o -name 'settings.gradle.kts' \
-              \) \
-              -print | sort
-          )
-
-          if [[ -z "$PROJECT_DIR" ]]; then
-            while IFS= read -r build_file; do
-              PROJECT_DIR="$(dirname "$build_file")"
-              break
-            done < <(
-              find project -type f \
-                \( \
-                  -name 'build.gradle' \
-                  -o -name 'build.gradle.kts' \
-                \) \
-                -print | sort
-            )
-          fi
-
-          if [[ -z "$PROJECT_DIR" ]]; then
-            echo "::error::Android Gradle project was not found inside the ZIP."
-            find project -maxdepth 10 -print | sort
-            exit 1
-          fi
-
-          echo "Android project found at: $PROJECT_DIR"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Show Android project
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== Project directory ==="
+          echo "=== Repository ==="
           pwd
 
-          echo "=== Project files ==="
-          find . -maxdepth 8 -type f -print | sort | sed -n '1,300p'
+          echo "=== Files ==="
+          ls -lah
 
-          echo "=== Gradle files ==="
-          find . -maxdepth 8 -type f \
-            \( \
-              -name 'build.gradle' \
-              -o -name 'build.gradle.kts' \
-              -o -name 'settings.gradle' \
-              -o -name 'settings.gradle.kts' \
-              -o -name 'gradle-wrapper.properties' \
-              -o -name 'gradlew' \
-            \) \
-            -print | sort
+          ZIP_FILE="$GITHUB_WORKSPACE/AI-Video-Studio-v1.zip"
 
-      - name: Setup Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+          if [[ ! -f "$ZIP_FILE" ]]; then
+            echo "::error::AI-Video-Studio-v1.zip was not found in repository root."
+            echo "Available files:"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -print | sort | head -300
+            exit 1
+          fi
 
-      - name: Verify Java and Gradle
-        working-directory: ${{ env.PROJECT_DIR }}
+          echo "ZIP found:"
+          ls -lh "$ZIP_FILE"
+
+          echo "=== ZIP contents ==="
+          unzip -l "$ZIP_FILE" | head -200
+
+      - name: Extract Android project
+        id: extract
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Java ==="
-          java -version
+          rm -rf "$GITHUB_WORKSPACE/project"
+          mkdir -p "$GITHUB_WORKSPACE/project"
 
-          echo "JAVA_HOME=$JAVA_HOME"
+          unzip -q -o \
+            "$GITHUB_WORKSPACE/AI-Video-Studio-v1.zip" \
+            -d "$GITHUB_WORKSPACE/project"
 
-          echo "=== Gradle ==="
+          echo "=== Extracted files ==="
+          find "$GITHUB_WORKSPACE/project" \
+            -maxdepth 6 \
+            -type f \
+            -print \
+            | sort \
+            | head -300
 
-          if [[ -x "./gradlew" ]]; then
+      - name: Find Android project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_ROOT="$GITHUB_WORKSPACE/project"
+
+          SETTINGS_FILE=""
+
+          while IFS= read -r file; do
+            candidate_dir="$(dirname "$file")"
+
+            if [[ -f "$candidate_dir/app/build.gradle.kts" ]] || \
+               [[ -f "$candidate_dir/app/build.gradle" ]]; then
+              SETTINGS_FILE="$file"
+              break
+            fi
+          done < <(
+            find "$PROJECT_ROOT" \
+              -type f \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              -print \
+              | sort
+          )
+
+          if [[ -z "$SETTINGS_FILE" ]]; then
+            echo "::error::Could not find the Android Gradle project."
+
+            echo "=== settings files ==="
+            find "$PROJECT_ROOT" \
+              -type f \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              -print \
+              | sort
+
+            echo "=== app Gradle files ==="
+            find "$PROJECT_ROOT" \
+              -type f \
+              \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) \
+              -print \
+              | sort
+
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+
+          echo "Android project:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Show Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== PROJECT_DIR ==="
+          echo "$PROJECT_DIR"
+
+          echo "=== Project files ==="
+          cd "$PROJECT_DIR"
+
+          pwd
+          ls -lah
+
+          echo "=== Gradle files ==="
+          find . \
+            -maxdepth 5 \
+            -type f \
+            \( \
+              -name "build.gradle" \
+              -o -name "build.gradle.kts" \
+              -o -name "settings.gradle" \
+              -o -name "settings.gradle.kts" \
+              -o -name "gradle.properties" \
+            \) \
+            -print \
+            | sort
+
+      - name: Configure Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [[ -z "$SDK_DIR" ]]; then
+            echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME is not available."
+            exit 1
+          fi
+
+          echo "sdk.dir=$SDK_DIR" > local.properties
+
+          echo "=== local.properties ==="
+          cat local.properties
+
+          touch gradle.properties
+
+          if ! grep -q '^android.builder.sdkDownload=true$' gradle.properties; then
+            printf '\nandroid.builder.sdkDownload=true\n' >> gradle.properties
+          fi
+
+          if ! grep -q '^kotlin.jvm.target.validation.mode=' gradle.properties; then
+            printf 'kotlin.jvm.target.validation.mode=error\n' >> gradle.properties
+          fi
+
+          echo "=== gradle.properties ==="
+          cat gradle.properties
+
+      - name: Force Java 17 compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > "$RUNNER_TEMP/ci-jvm17.init.gradle" <<'EOF'
+          import org.gradle.api.tasks.compile.JavaCompile
+
+          gradle.projectsEvaluated {
+              allprojects { project ->
+
+                  project.tasks.withType(JavaCompile).configureEach {
+                      sourceCompatibility = "17"
+                      targetCompatibility = "17"
+                  }
+
+              }
+          }
+          EOF
+
+          echo "=== CI Gradle init script ==="
+          cat "$RUNNER_TEMP/ci-jvm17.init.gradle"
+
+      - name: Prepare Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          if [[ -f "./gradlew" ]]; then
+            chmod +x ./gradlew
             ./gradlew --version
           else
             gradle --version
           fi
 
-      - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Check Android module
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Checking Android app module ==="
+          cd "$PROJECT_DIR"
 
-          if [[ ! -d "app" ]]; then
-            echo "::error::The app module was not found."
-
-            echo "=== Project directories ==="
-            find . -maxdepth 5 -type d -print | sort
-
+          if [[ ! -f "app/build.gradle.kts" ]] && \
+             [[ ! -f "app/build.gradle" ]]; then
+            echo "::error::app Gradle module was not found."
+            find . -maxdepth 5 -type f | sort | head -300
             exit 1
           fi
 
-          echo "=== Building Debug APK ==="
+          echo "=== Android app module ==="
+          ls -lah app
 
-          if [[ -x "./gradlew" ]]; then
-            chmod +x ./gradlew
-
-            ./gradlew \
-              :app:assembleDebug \
-              --no-daemon \
-              --stacktrace \
-              --warning-mode all
-          else
-            gradle \
-              :app:assembleDebug \
-              --no-daemon \
-              --stacktrace \
-              --warning-mode all
-          fi
-
-      - name: Find generated APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Build Debug APK
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== APK files ==="
+          cd "$PROJECT_DIR"
 
-          find app/build/outputs \
-            -type f \
-            -name '*.apk' \
-            -print | sort
+          echo "=== Java ==="
+          java -version
 
-          APK=""
-
-          while IFS= read -r apk_file; do
-            APK="$apk_file"
-            break
-          done < <(
-            find app/build/outputs \
-              -type f \
-              -name '*debug*.apk' \
-              -print | sort
-          )
-
-          if [[ -z "$APK" ]]; then
-            while IFS= read -r apk_file; do
-              APK="$apk_file"
-              break
-            done < <(
-              find app/build/outputs \
-                -type f \
-                -name '*.apk' \
-                -print | sort
-            )
+          echo "=== Gradle ==="
+          if [[ -f "./gradlew" ]]; then
+            GRADLE_CMD="./gradlew"
+          else
+            GRADLE_CMD="gradle"
           fi
 
-          if [[ -z "$APK" ]]; then
+          $GRADLE_CMD --version
+
+          echo "=== Building Debug APK ==="
+
+          $GRADLE_CMD \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all \
+            --init-script "$RUNNER_TEMP/ci-jvm17.init.gradle" \
+            :app:assembleDebug
+
+      - name: Find generated APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "=== APK files ==="
+
+          find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print \
+            | sort
+
+          APK_COUNT="$(
+            find app/build/outputs/apk \
+              -type f \
+              -name "*.apk" \
+              | wc -l
+          )"
+
+          if [[ "$APK_COUNT" -eq 0 ]]; then
             echo "::error::No APK was generated."
 
             echo "=== Build outputs ==="
             find app/build/outputs \
-              -maxdepth 10 \
+              -maxdepth 6 \
               -type f \
-              -print 2>/dev/null | sort || true
+              -print \
+              | sort \
+              | head -300
 
             exit 1
           fi
 
-          echo "APK found: $APK"
-
+          rm -rf "$GITHUB_WORKSPACE/apk-output"
           mkdir -p "$GITHUB_WORKSPACE/apk-output"
 
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/apk-output/AI-Video-Studio-v1-debug.apk"
+          find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -exec cp -v {} "$GITHUB_WORKSPACE/apk-output/" \;
 
-          echo "=== Final APK ==="
-
-          ls -lh \
-            "$GITHUB_WORKSPACE/apk-output/AI-Video-Studio-v1-debug.apk"
+          echo "=== Final APK files ==="
+          ls -lah "$GITHUB_WORKSPACE/apk-output"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI-Video-Studio-v1-APK
-          path: apk-output/AI-Video-Studio-v1-debug.apk
+          name: AI-Video-Studio-Debug-APK
+          path: apk-output
           if-no-files-found: error
           retention-days: 14
